@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="data:,"> <!-- favicon 404 에러 방지 -->
+    <title>심플 채팅방</title>
+    <!-- Supabase 라이브러리 불러오기 -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body { font-family: 'Malgun Gothic', sans-serif; background-color: #f0f0f0; display: flex; justify-content: center; margin: 0; padding: 20px; }
+        .chat-container { width: 100%; max-width: 400px; background: white; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); overflow: hidden; display: flex; flex-direction: column; height: 80vh; }
+        .header { background: #fee500; padding: 15px; text-align: center; font-weight: bold; }
+        .nickname-box { padding: 10px; background: #f9f9f9; border-bottom: 1px solid #ddd; }
+        .nickname-box input { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 5px; }
+        .chat-box { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+        .message { background: #e2e2e2; padding: 8px 12px; border-radius: 15px; align-self: flex-start; max-width: 80%; word-break: break-word; }
+        .message.me { background: #fee500; align-self: flex-end; }
+        .message span { display: block; font-size: 11px; color: #666; margin-bottom: 3px; }
+        .input-box { display: flex; padding: 10px; border-top: 1px solid #ddd; background: white; }
+        .input-box input { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 5px; outline: none; }
+        .input-box button { padding: 10px 15px; margin-left: 5px; border: none; background: #333; color: white; border-radius: 5px; cursor: pointer; }
+        .loading { text-align: center; font-size: 12px; color: #999; padding: 5px 0; display: none; }
+    </style>
+</head>
+<body>
+
+<div class="chat-container">
+    <div class="header">💬 익명 채팅방</div>
+    
+    <div class="nickname-box">
+        <input type="text" id="nicknameInput" placeholder="사용할 닉네임을 입력하세요" value="익명">
+    </div>
+
+    <div class="chat-box" id="chatBox">
+        <div id="loadingMore" class="loading">이전 메시지 불러오는 중...</div>
+    </div>
+
+    <div class="input-box">
+        <input type="text" id="messageInput" placeholder="메시지를 입력하세요..." onkeypress="if(event.key === 'Enter') sendMessage()">
+        <button onclick="sendMessage()">전송</button>
+    </div>
+</div>
+
+<script>
+    const SUPABASE_URL = 'https://lygjkofnsronuksdfriz.supabase.co'; 
+    const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5Z2prb2Zuc3JvbnVrc2Rmcml6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA3MTQxMDIsImV4cCI6MjEwNjI5MDEwMn0.nK6Iw4OmFZ5_tlAJaLN1xcZRMfC_MfFJnJUfHr1FJBw';
+    
+    // 기본 supabase 변수와 충돌하지 않도록 supabaseClient로 변경
+    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    const chatBox = document.getElementById('chatBox');
+    const messageInput = document.getElementById('messageInput');
+    const nicknameInput = document.getElementById('nicknameInput');
+    const loadingMore = document.getElementById('loadingMore');
+
+    let isFetching = false;
+    let hasMore = true;
+    let messageCount = 0;
+    const LIMIT = 15;
+
+    function renderMessage(msg, prepend = false) {
+        const div = document.createElement('div');
+        div.className = 'message';
+        if (msg.nickname === nicknameInput.value) {
+            div.classList.add('me');
+        }
+        div.innerHTML = `<span>${msg.nickname}</span>${msg.content}`;
+        
+        if (prepend) {
+            chatBox.insertBefore(div, loadingMore.nextSibling);
+        } else {
+            chatBox.appendChild(div);
+        }
+    }
+
+    async function loadInitialMessages() {
+        const { data, error } = await supabaseClient
+            .from('messages')
+            .select('*')
+            .order('id', { ascending: false })
+            .limit(LIMIT);
+
+        if (data) {
+            data.reverse().forEach(msg => renderMessage(msg, false));
+            messageCount = data.length;
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+    }
+
+    async function loadMoreMessages() {
+        if (isFetching || !hasMore) return;
+        isFetching = true;
+        loadingMore.style.display = 'block';
+
+        const previousScrollHeight = chatBox.scrollHeight;
+
+        const { data, error } = await supabaseClient
+            .from('messages')
+            .select('*')
+            .order('id', { ascending: false })
+            .range(messageCount, messageCount + LIMIT - 1);
+
+        loadingMore.style.display = 'none';
+
+        if (data && data.length > 0) {
+            data.forEach(msg => renderMessage(msg, true));
+            messageCount += data.length;
+            chatBox.scrollTop = chatBox.scrollHeight - previousScrollHeight;
+        } else {
+            hasMore = false;
+        }
+        isFetching = false;
+    }
+
+    chatBox.addEventListener('scroll', () => {
+        if (chatBox.scrollTop === 0) {
+            loadMoreMessages();
+        }
+    });
+
+    async function sendMessage() {
+        const content = messageInput.value.trim();
+        const nickname = nicknameInput.value.trim() || '익명';
+
+        if (!content) return;
+
+        messageInput.value = '';
+
+        await supabaseClient
+            .from('messages')
+            .insert([{ nickname: nickname, content: content }]);
+    }
+
+    supabaseClient
+        .channel('public:messages')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
+            renderMessage(payload.new, false);
+            chatBox.scrollTop = chatBox.scrollHeight;
+            messageCount++;
+        })
+        .subscribe();
+
+    loadInitialMessages();
+</script>
+
+</body>
+</html>
